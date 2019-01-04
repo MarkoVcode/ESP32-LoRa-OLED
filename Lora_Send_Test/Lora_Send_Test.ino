@@ -36,7 +36,7 @@ void setup () {
   
   SPI.begin (SCK, MISO, MOSI, SS);
   LoRa.setPins (SS, RST, DI0);
-  if (! LoRa.begin (868)) {
+  if (! LoRa.begin (BAND)) {
     Serial.println ("Starting LoRa failed!");
     while (1);
   }
