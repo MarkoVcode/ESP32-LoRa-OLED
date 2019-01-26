@@ -12,7 +12,10 @@
 //encrypted message packet format
 //KS:01:<encrypted message packet format from above>
 
+#include <Wire.h>
 #include <SPI.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BME280.h>
 #include <LoRa.h>
 #include "SSD1306.h"
 
@@ -26,10 +29,15 @@
 #define BAND 868E6 // 915E6
 #define BUTTON 0
 
-//Logic configuration
-#define SEND_READINGS_DELAY_S 60
-#define DISPLAY_OFF_DELAY_S 90
+#define BME_SCK 22    //SCL
+#define BME_MISO 12   //SDO
+#define BME_MOSI 21   //SDI   //SDA
+#define BME_CS 13     //CSB
 
+//Logic configuration
+#define SEND_READINGS_DELAY_S 15
+#define DISPLAY_OFF_DELAY_S 90
+#define SEALEVELPRESSURE_HPA (1013.25)
 //Endpoint identification
 //instalation identifier
 String netID = "KS";
@@ -40,6 +48,12 @@ unsigned int counter = 0;
 int displayTimeout = 0;
 int sendReadingsDelay = 0;
 
+Adafruit_BME280 bme(BME_CS, BME_MOSI, BME_MISO, BME_SCK);
+
+bool bmeSensorPresent = true;
+char* myValues[]={"This is string 1", "This is string 2", "This is string 3",
+"This is string 4", "This is string 5","This is string 6"};
+   
 SSD1306 display (0x3c, 4, 15);
 
 // Interrupt Service Routine - Keep it short!
@@ -50,11 +64,10 @@ void IRAM_ATTR handleButtonInterrupt() {
 }
 
 String readSensors() {
-  String result = "T:-39.98;H:48.55;P:324523;B:3.2";
-  //read sensors here
-  Serial.println ("Sensors: " + result);
-  return result; 
+    String resultBuild ="T:"+String(bme.readTemperature())+";H:"+String(bme.readHumidity())+";P:"+String(bme.readPressure() / 100.0F)+";B:3.9;C:3.9;";
+    return resultBuild; 
 }
+
 
 String preparePayload(String readings, bool encryptionEnabled) {
   String result;
@@ -80,8 +93,11 @@ void transmitResults(String data) {
   LoRa.sleep();
 }
 
-String getValue(String data, String index) {
-    char string[] = "KS;01;T:-39.98;H:48.55;P:32453;B:3.2";
+String getValue(String dataIN, String index) {
+    String nodeValues = "KS;01;"+dataIN;
+    char string[nodeValues.length()];
+    nodeValues.toCharArray(string, nodeValues.length());
+  //  char string[] = "KS;01;T:-39.98;H:48.55;P:32453;B:3.2";
     char delimiter[] = ";";
     char delimiter2[] = ":";
     char* ptr = strtok(string, delimiter);
@@ -115,25 +131,26 @@ void displayResults(String data, bool txInd, int countdown) {
     display.drawString(45, 1, "NODE:"+getValue(data, "NODE"));
     display.drawString(98, 1, String(countdown));
     display.drawString(4, 17, "Temp");
-    display.drawString(57, 17, "[ºC]");
-    display.drawString(92, 17, getValue(data, "T"));
+    display.drawString(56, 17, "[ºC]");
+    display.drawString(86, 17, getValue(data, "T"));
     display.drawString(4, 27, "Humidity");
     display.drawString(57, 27, "[%]"); 
-    display.drawString(92, 27, getValue(data, "H"));   
+    display.drawString(86, 27, getValue(data, "H"));   
     display.drawString(4, 37, "Pressure");
-    display.drawString(57, 37, "[hPa]"); 
-    display.drawString(92, 37, getValue(data, "P"));   
-    display.drawString(4, 47, "Battery");
-    display.drawString(57, 47, "[V]");
-    display.drawString(92, 47, getValue(data, "B"));
+    display.drawString(52, 37, "[hPa]"); 
+    display.drawString(86, 37, getValue(data, "P"));   
+    display.drawString(4, 49, "Battery");
+    display.drawString(57, 49, "[V]");
+    display.drawLine(103,50,103, 62); 
+    display.drawString(84, 49, getValue(data, "B") + "   " + getValue(data, "C"));
   } else {
     display.drawString(0, 1, "NET:--");
     display.drawString(45, 1, "NODE:--");
   }
   display.drawString(0, 52, "______________________");
   display.drawLine(0,16,0, 62);
-  display.drawLine(52,16,52, 62);
-  display.drawLine(85,16,85, 62);
+  display.drawLine(48,16,48, 62); 
+  display.drawLine(79,16,79, 62);
   display.drawLine(127,16,127, 62);
   if(txInd) {
     display.drawCircle(124, 7, 3);
@@ -143,6 +160,19 @@ void displayResults(String data, bool txInd, int countdown) {
 }
 
 void setup () {
+  Serial.begin (115200);
+ // Wire.begin();
+
+    bool status;
+    
+    // default settings
+    // (you can also pass in a Wire library object like &Wire2)
+    status = bme.begin();  
+    if (!status) {
+        Serial.println("Could not find a valid BME280 sensor, check wiring!");
+        while (1);
+    }
+    
   displayTimeout = DISPLAY_OFF_DELAY_S;
   pinMode (16, OUTPUT);
   pinMode (2, OUTPUT);
@@ -152,7 +182,7 @@ void setup () {
   delay (50);
   digitalWrite (16, HIGH); // while OLED is running, GPIO16 must go high
   
-  Serial.begin (9600);
+
   while (! Serial);
   Serial.println ();
   Serial.println ("LoRa Sender Test");
@@ -165,7 +195,6 @@ void setup () {
   }
 
   Serial.println ("init ok");
-  
   display.init();
   display.flipScreenVertically();
   display.setFont(ArialMT_Plain_10);
@@ -173,12 +202,13 @@ void setup () {
 
   attachInterrupt(digitalPinToInterrupt(BUTTON), handleButtonInterrupt, FALLING);
   displayResults("", false, 0);
+
   delay (1500);
 }
 
 void loop () {
   String reading;
-  String displayData;
+  String displayData=readSensors();
   Serial.println ("cycle");
   if(displayTimeout > 0 || sendReadingsDelay == 0) {
     reading = readSensors();
@@ -201,11 +231,10 @@ void loop () {
       display.clear();
       display.display();
     }
-    delay (700);
+    delay (1000);
   } else {
     delay (1000); 
   }
   sendReadingsDelay--;
   counter ++;
- // delay (1000); // wait for a second
 }
